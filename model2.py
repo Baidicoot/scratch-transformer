@@ -104,7 +104,9 @@ class GPT(nn.Module):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02*(2 * self.cfg.n_layers)**-0.5)
 
     def forward(self, inputs, targets=None):
-        positions = pos = torch.arange(0, inputs.size(1)).unsqueeze(0)
+        device = inputs.device
+
+        positions = pos = torch.arange(0, inputs.size(1), device=device).unsqueeze(0)
 
         outputs = self.drop(self.embed(inputs)) + self.pos_embed(positions)
 
