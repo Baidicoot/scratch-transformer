@@ -4,10 +4,9 @@ from collections import defaultdict
 import torch
 from torch.utils.data.dataloader import DataLoader
 
-from utils import CfgNode as CN
+from utils import Cfg as CN
 
 class Trainer:
-
     @staticmethod
     def get_default_config():
         return CN(
@@ -63,7 +62,7 @@ class Trainer:
         # setup the dataloader
         train_loader = DataLoader(
             self.train_dataset,
-            sampler=torch.utils.data.RandomSampler(self.train_dataset, replacement=True, num_samples=int(1e10)),
+            #sampler=torch.utils.data.RandomSampler(self.train_dataset, replacement=True, num_samples=int(1e10)),
             shuffle=False,
             pin_memory=True,
             batch_size=config.batch_size,

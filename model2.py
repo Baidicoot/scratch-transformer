@@ -106,7 +106,7 @@ class GPT(nn.Module):
     def forward(self, inputs, targets=None):
         device = inputs.device
 
-        positions = pos = torch.arange(0, inputs.size(1), device=device).unsqueeze(0)
+        positions = torch.arange(0, inputs.size(1), device=device).unsqueeze(0)
 
         outputs = self.drop(self.embed(inputs)) + self.pos_embed(positions)
 
@@ -147,7 +147,7 @@ class GPT(nn.Module):
             {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": optim_cfg.weight_decay},
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
-        optimizer = torch.optim.AdamW(optim_groups, lr=optim_cfg.lr, betas=optim_cfg.betas)
+        optimizer = torch.optim.AdamW(optim_groups, lr=optim_cfg.learning_rate, betas=optim_cfg.betas)
         return optimizer
     
     @torch.no_grad()
