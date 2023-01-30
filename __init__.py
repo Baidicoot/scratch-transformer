@@ -82,6 +82,7 @@ model_config.vocab_size = train_dataset.get_vocab_size()
 #model_config.seq_len = train_dataset.get_block_size()
 
 model = GPT(model_config)
+model.to("cuda")
 
 train_config = Trainer.get_default_config()
 train_config.lr = 5e-4
