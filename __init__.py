@@ -80,7 +80,6 @@ model_config = Cfg(embed_dim=48, n_layers=3, num_heads=3, p_drop=0.1)
 model_config.vocab_size = train_dataset.get_vocab_size()
 #model_config.block_size = train_dataset.get_block_size()
 model_config.seq_len = train_dataset.get_block_size()
-model_config.pad_id = -1
 
 model = GPT(model_config)
 
