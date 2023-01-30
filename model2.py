@@ -23,13 +23,15 @@ class Block(nn.Module):
     def __init__(self, cfg):
         super(Block, self).__init__()
         self.ln_1 = nn.LayerNorm(cfg.embed_dim)
-        self.attn = nn.MultiheadAttention(cfg.embed_dim, cfg.num_heads)
+        self.attn = nn.MultiheadAttention(cfg.embed_dim, cfg.num_heads, cfg.p_drop, batch_first=True)
         self.ln_2 = nn.LayerNorm(cfg.embed_dim)
         self.ffn = FeedForwardNetwork(cfg)
+        self.cfg = cfg
     
     def forward(self, x, attn_mask):
-        x = self.ln_1(x + self.attn(x, x, x, attn_mask))
-        x = self.ln_2(x + self.ffn(x))
+        self_attn, _ = self.attn(x, x, x, attn_mask)
+        x = x + self.ln_1(self_attn)
+        x = x + self.ln_2(self.ffn(x))
         return x
 
 # decoder-only transformer
@@ -38,32 +40,44 @@ class GPT(nn.Module):
         super(GPT, self).__init__()
         self.embed = nn.Embedding(cfg.vocab_size, cfg.embed_dim)
         self.pos_embed = nn.Embedding(cfg.seq_len+1, cfg.embed_dim)
+        self.drop = nn.Dropout(cfg.p_drop)
         self.layers = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layers)])
+        self.ln = nn.LayerNorm(cfg.embed_dim)
+        self.unembed = nn.Linear(cfg.embed_dim, cfg.vocab_size, bias=False)
 
         self.cfg = cfg
+        self.apply(self._init_weights)
     
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        elif isinstance(module, nn.LayerNorm):
+            torch.nn.init.zeros_(module.bias)
+            torch.nn.init.ones_(module.weight)
+
     # inputs expected as matrix (batch_size, seq_len)
-    def forward(self, inputs):
+    def forward(self, inputs, targets=None):
+
         positions = torch.arange(inputs.size(1)).repeat(inputs.size(0), 1) + 1
-        pos_pad_mask = inputs.eq(self.cfg.pad_id)
-        positions.masked_fill_(pos_pad_mask, 0)
+        pad_mask = inputs.eq(self.cfg.pad_id)
+        positions.masked_fill_(pad_mask, 0)
 
-        outputs = self.embed(inputs) + self.pos_embed(positions)
-
-        # somehow compute the masks through ??? matrices
-        attn_pad_mask =
-            inputs.eq(self.cfg.pad_id) # (batch_size, seq_len)
-            .unsqueeze(1) # (batch_size, 1, seq_len)
-            .repeat(1, inputs.size(1), 1) # (batch_size, seq_len, seq_len)
-        subseq_mask =
-            torch.ones(inputs.size(0), inputs.size(1), inputs.size(1))
-            .triu(diagonal=1) # (batch_size, seq_len, seq_len) (hopefully)
-        attn_mask = torch.gt(attn_pad_mask + subseq_mask, 0) # not sure why, who knows
+        outputs = self.drop(self.embed(inputs) + self.pos_embed(positions))
 
         for layer in self.layers:
-            outputs = layer(outputs, attn_mask)
+            outputs = layer(outputs, pad_mask)
+
+        outputs = self.unembed(self.ln(outputs))
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
         
-        return outputs
+        return outputs, loss
 
     def configure_optimizers(self, optim_cfg):
         # want to NOT decay biases, or anything from LayerNorm or Embedding
@@ -74,16 +88,14 @@ class GPT(nn.Module):
 
         for mn, m in self.named_modules():
             for pn, p in m.named_parameters():
-                fpn = "%s.%s" (mn, pn) if mn else pn
+                fpn = "%s.%s" % (mn, pn) if mn else pn
 
-                if pn.endswith("bias"):
-                    no_decay.add(fpn)
-                elif isinstance(m, blacklist_decay_modules):
+                if pn.endswith("bias"): # or isinstance(m, blacklist_decay_modules):
                     no_decay.add(fpn)
                 else:
                     decay.add(fpn)
         
-        param_dict = self.named_parameters()
+        param_dict = {pn: p for pn, p in self.named_parameters()}
 
         optim_groups = [
             {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": optim_cfg.weight_decay},
@@ -97,7 +109,7 @@ class GPT(nn.Module):
         for _ in range(max_new_tokens):
             idx_cropped = idx if idx.size(1) <= self.cfg.seq_len else idx[:, -self.cfg.seq_len:]
 
-            logits = self(idx_cropped)
+            logits, _ = self(idx_cropped)
             logits = logits[:, -1, :] / temp
 
             probs = F.softmax(logits, dim=-1)

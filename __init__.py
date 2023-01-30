@@ -1,4 +1,4 @@
-from model import GPT
+from model2 import GPT
 from trainer import Trainer
 
 import pickle
@@ -6,7 +6,7 @@ import pickle
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 
-from utils import CfgNode as CN
+from utils import Cfg as Cfg
 
 import torch
 
@@ -74,15 +74,18 @@ class SortDataset(Dataset):
 train_dataset = SortDataset("train")
 test_dataset = SortDataset("test")
 
-model_config = GPT.get_default_config()
-model_config.model_type = 'gpt-nano'
+model_config = Cfg(embed_dim=48, n_layers=3, num_heads=3, p_drop=0.1)
+#model_config = GPT.get_default_config()
+#model_config.model_type = "gpt-nano"
 model_config.vocab_size = train_dataset.get_vocab_size()
-model_config.block_size = train_dataset.get_block_size()
+#model_config.block_size = train_dataset.get_block_size()
+model_config.seq_len = train_dataset.get_block_size()
+model_config.pad_id = -1
 
 model = GPT(model_config)
 
 train_config = Trainer.get_default_config()
-train_config.learning_rate = 5e-4
+train_config.lr = 5e-4
 train_config.max_iters = 2000
 train_config.num_workers = 0
 trainer = Trainer(train_config, model, train_dataset)
@@ -109,7 +112,7 @@ def eval_split(trainer, split, max_batches):
         inp = x[:, :n]
         sol = y[:, -n:]
         # let the model sample the rest of the sequence
-        cat = model.generate(inp, n, do_sample=False) # using greedy argmax, not sampling
+        cat = model.generate(inp, n) # using greedy argmax, not sampling
         sol_candidate = cat[:, n:] # isolate the filled in sequence
         # compare the predicted sequence to the true sequence
         correct = (sol == sol_candidate).all(1).cpu() # Software 1.0 vs. Software 2.0 fight RIGHT on this line haha
@@ -133,7 +136,7 @@ n = train_dataset.length
 inp = torch.tensor([[0, 0, 2, 1, 0, 1]], dtype=torch.long).to(trainer.device)
 assert inp[0].nelement() == n
 with torch.no_grad():
-    cat = model.generate(inp, n, do_sample=False)
+    cat = model.generate(inp, n)
 sol = torch.sort(inp[0])[0]
 sol_candidate = cat[:, n:]
 print('input sequence  :', inp.tolist())
