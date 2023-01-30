@@ -74,12 +74,12 @@ class SortDataset(Dataset):
 train_dataset = SortDataset("train")
 test_dataset = SortDataset("test")
 
-model_config = Cfg(embed_dim=48, n_layers=3, num_heads=3, p_drop=0.1)
+model_config = Cfg(embed_dim=48, n_layers=3, num_heads=3, seq_len=16, p_drop=0.1)
 #model_config = GPT.get_default_config()
 #model_config.model_type = "gpt-nano"
 model_config.vocab_size = train_dataset.get_vocab_size()
 #model_config.block_size = train_dataset.get_block_size()
-model_config.seq_len = train_dataset.get_block_size()
+#model_config.seq_len = train_dataset.get_block_size()
 
 model = GPT(model_config)
 
