@@ -17,11 +17,5 @@ def set_seed(seed):
 
 class Cfg:
     def __init__(self, **kwargs):
+        self.dict = kwargs
         self.__dict__.update(kwargs)
-
-class CfgNode:
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
-    def merge_from_dict(self, d):
-        self.__dict__.update(d)

@@ -83,9 +83,6 @@ class GPT(nn.Module):
 
         self.cfg = cfg
         self.apply(self._init_weights)
-
-        n_params = sum(p.numel() for p in self.parameters())
-        print("using %.2fM parameter model" % (n_params/1e6,))
     
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -103,7 +100,7 @@ class GPT(nn.Module):
             if pn.endswith('out_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02*(2 * self.cfg.n_layers)**-0.5)
 
-    def forward(self, inputs, targets=None):
+    def forward(self, inputs):
         device = inputs.device
 
         positions = torch.arange(0, inputs.size(1), device=device).unsqueeze(0)
@@ -115,13 +112,9 @@ class GPT(nn.Module):
 
         outputs = self.unembed(self.ln(outputs))
 
-        loss = None
-        if targets is not None:
-            loss = F.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
-        
-        return outputs, loss
+        return outputs
 
-    def configure_optimizers(self, optim_cfg):
+    def optim_groups(self, optim_cfg):
         # want to NOT decay biases, or anything from LayerNorm or Embedding
         # for some reason
         decay = set()
@@ -147,19 +140,24 @@ class GPT(nn.Module):
             {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": optim_cfg.weight_decay},
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
-        optimizer = torch.optim.AdamW(optim_groups, lr=optim_cfg.learning_rate, betas=optim_cfg.betas)
-        return optimizer
+        return optim_groups
     
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temp=1.0):
+        output = []
         for _ in range(max_new_tokens):
             idx_cropped = idx if idx.size(1) <= self.cfg.seq_len else idx[:, -self.cfg.seq_len:]
 
-            logits, _ = self(idx_cropped)
+            logits = self(idx_cropped)
             logits = logits[:, -1, :] / temp
 
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
+
+            if len(output) == 0:
+                output.extend(iter(idx[0]))
+            else:
+                output.append(idx_next)
         
-        return idx
+        return output

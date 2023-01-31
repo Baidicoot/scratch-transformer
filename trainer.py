@@ -2,31 +2,41 @@ import time
 from collections import defaultdict
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data.dataloader import DataLoader
+from torch.cuda.amp import GradScaler, autocast
 
-from utils import Cfg as CN
+from utils import Cfg
+
+def optimizer(optim, model, cfg):
+    groups = model.parameters()
+    if hasattr(model, "optim_groups"):
+        groups = model.optim_groups(cfg)
+    return optim(groups, **cfg.dict)
 
 class Trainer:
     @staticmethod
     def get_default_config():
-        return CN(
+        return Cfg(
             # device to train on
             device = 'auto',
             # dataloder parameters
             num_workers = 4,
             # optimizer parameters
-            max_iters = None,
-            batch_size = 64,
-            learning_rate = 3e-4,
-            betas = (0.9, 0.95),
-            weight_decay = 0.1, # only applied on matmul weights
-            grad_norm_clip = 1.0
+            max_iters = None
         )
 
-    def __init__(self, config, model, train_dataset):
+    def __init__(self, config, model, train_dataset, optimizer, lossfn = None, sampler = None):
         self.config = config
         self.model = model
-        self.optimizer = None
+
+        self.optimizer = optimizer
+
+        self.lossfn = lossfn
+        if lossfn is None:
+            self.lossfn = lambda outputs, targets : F.cross_entropy(outputs.view(-1, outputs.size(-1)), targets.view(-1), ignore_index=-1)
+        
+        self.sampler = sampler
         self.train_dataset = train_dataset
         self.callbacks = defaultdict(list)
 
@@ -36,7 +46,9 @@ class Trainer:
         else:
             self.device = config.device
         self.model = self.model.to(self.device)
-        print("running on device", self.device)
+        n_params = sum(p.numel() for p in self.model.parameters())
+        print("using %.2fM parameter model" % (n_params/1e6,))
+        print("running on", self.device)
 
         # variables that will be assigned to trainer class later for logging and etc
         self.iter_num = 0
@@ -56,13 +68,10 @@ class Trainer:
     def run(self):
         model, config = self.model, self.config
 
-        # setup the optimizer
-        self.optimizer = model.configure_optimizers(config)
-
         # setup the dataloader
         train_loader = DataLoader(
             self.train_dataset,
-            #sampler=torch.utils.data.RandomSampler(self.train_dataset, replacement=True, num_samples=int(1e10)),
+            sampler = self.sampler,
             shuffle=False,
             pin_memory=True,
             batch_size=config.batch_size,
@@ -73,7 +82,11 @@ class Trainer:
         self.iter_num = 0
         self.iter_time = time.time()
         data_iter = iter(train_loader)
+
+        scaler = GradScaler()
+
         while True:
+            self.optimizer.zero_grad()
 
             # fetch the next batch (x, y) and re-init iterator if needed
             try:
@@ -85,13 +98,18 @@ class Trainer:
             x, y = batch
 
             # forward the model
-            logits, self.loss = model(x, y)
+            if self.device == "cuda":
+                with autocast():
+                    logits = model(x)
+                    self.loss = self.lossfn(logits, y)
+            else:
+                logits = model(x)
+                self.loss = self.lossfn(logits, y)
 
             # backprop and update the parameters
-            model.zero_grad(set_to_none=True)
-            self.loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_norm_clip)
-            self.optimizer.step()
+            scaler.scale(self.loss).backward()
+            scaler.step(self.optimizer)
+            scaler.update()
 
             self.trigger_callbacks('on_batch_end')
             self.iter_num += 1
